@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Xml.Linq;
@@ -42,42 +43,54 @@ namespace reportformatter {
             return SaveReport(targetFilePath, clo.TargetReportName);
         }
 
-        static void ProcessFile(string targetFilePath, string sourceFile) {
-            int not_run;
-            int total;
-            int failures;
+        static bool ProcessFile(string targetFilePath, string sourceFilePath) {
             string outFilePath = targetFilePath;
+            if (!infos.ContainsKey(outFilePath))
+                infos.Add(outFilePath, new Info("root"));
             bool orgReport = false;
-
-            XDocument xml = XDocument.Load(sourceFile);
-
-            XElement tmpEl = xml.Root;
-            total = int.Parse(tmpEl.Attribute("total").Value);
-            not_run = int.Parse(tmpEl.Attribute("not-run").Value);
-            failures = int.Parse(tmpEl.Attribute("failures").Value);
-            runInfos[outFilePath].Plus(total, failures, not_run);
-            //infos[outFilePath] = new Info();
-            IEnumerable<XElement> elements;
-
-            if (orgReport)
-                elements = xml.Root.Elements("test-suite");
-            else
-                elements = xml.Root.Element("test-suite").Element("results").Elements("test-suite");
-            foreach (XElement main in elements) {
-                //if(infos[outFilePath] != null)
-                Info resultInfo;
-                string rootSuiteName = main.Attribute("name").Value;
-                if (infos[outFilePath].DescendantDict.ContainsKey(rootSuiteName)) {
-                    resultInfo = ParseDescendantsRecursive(main, infos[outFilePath].DescendantDict[rootSuiteName]);
-                    infos[outFilePath].DescendantDict[rootSuiteName] = resultInfo;
-                }
-                else {
-                    resultInfo = ParseDescendantsRecursive(main, null);
-                    infos[outFilePath].DescendantDict.Add(rootSuiteName, resultInfo);
-                }
-                Log.Info(rootSuiteName);
-                //    infos[outFilePath] = resultInfo;
+            if (!runInfos.ContainsKey(outFilePath)) {
+                RunInfo ri = new RunInfo();
+                runInfos.Add(outFilePath, ri);
             }
+            var filesToGlue = new[] { sourceFilePath };
+            foreach (var item in filesToGlue) {
+                Log.Info("glue " + item);
+
+                XDocument xml = XDocument.Load(item);
+                XElement tmpEl = xml.Root;
+                var total = int.Parse(tmpEl.Attribute("total").Value);
+                var not_run = int.Parse(tmpEl.Attribute("not-run").Value);
+                var failures = int.Parse(tmpEl.Attribute("failures").Value);
+                runInfos[outFilePath].Plus(total, failures, not_run);
+                //infos[outFilePath] = new Info();
+                IEnumerable<XElement> elements;
+
+                if (orgReport)
+                    elements = xml.Root.Elements("test-suite");
+                else
+                    elements = xml.Root.Element("test-suite").Element("results").Elements("test-suite");
+                foreach (XElement main in elements) {
+                    //if(infos[outFilePath] != null)
+                    Info resultInfo;
+                    string rootSuiteName = main.Attribute("name").Value;
+                    if (infos[outFilePath].DescendantDict.ContainsKey(rootSuiteName)) {
+                        resultInfo = ParseDescendantsRecursive(main, infos[outFilePath].DescendantDict[rootSuiteName]);
+                        infos[outFilePath].DescendantDict[rootSuiteName] = resultInfo;
+                    }
+                    else {
+                        resultInfo = ParseDescendantsRecursive(main, null);
+                        infos[outFilePath].DescendantDict.Add(rootSuiteName, resultInfo);
+                    }
+                    Log.Info(rootSuiteName);
+                    //    infos[outFilePath] = resultInfo;
+                }
+
+            }
+            // calculating stat
+            foreach (var subRootInfo in infos[outFilePath].DescendantDict.Values) {
+                infos[outFilePath].Success = infos[outFilePath].Success && subRootInfo.Success;
+            }
+            return infos[outFilePath].Success;
         }
 
         static Info ParseDescendantsRecursive(XElement rootSuite, Info info) {
